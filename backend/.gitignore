@@ -1,0 +1,63 @@
+# Binaries
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+bin/
+dist/
+api
+*.out
+
+# Test binary
+*.test
+*.test.exe
+
+# Output of the go coverage tool
+*.out
+coverage.out
+coverage.html
+
+# Dependency directories
+vendor/
+
+# Go workspace file
+go.work
+go.work.sum
+
+# Air hot-reload temporary files
+tmp/
+.air.toml.bak
+
+# Environment variables
+.env
+.env.local
+.env.*.local
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*.sublime-project
+*.sublime-workspace
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs/
+
+# Swagger generated docs (can be committed for API documentation)
+# Uncomment to ignore:
+# docs/
+
+# Build artifacts
+*.a
+*.o
+*.so
+*.dylib
+
+

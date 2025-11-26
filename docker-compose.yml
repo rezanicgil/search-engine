@@ -1,0 +1,110 @@
+# docker-compose.yml - Multi-container orchestration
+# Defines services: backend, frontend, MySQL, Redis (optional for caching)
+
+services:
+  mysql:
+    image: mysql:8.0
+    container_name: search-engine-mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: password
+      MYSQL_DATABASE: search_engine
+      MYSQL_USER: app_user
+      MYSQL_PASSWORD: app_password
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - search-engine-network
+
+  redis:
+    image: redis:7-alpine
+    container_name: search-engine-redis
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - search-engine-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: docker/Dockerfile
+    container_name: search-engine-backend
+    ports:
+      - "8080:8080"
+      - "8082:8082"
+    environment:
+      # Server config
+      SERVER_PORT: "8080"
+      SERVER_HOST: "0.0.0.0"
+      # Database config (using service name from docker-compose)
+      DB_HOST: "mysql"
+      DB_PORT: "3306"
+      DB_USER: "root"
+      DB_PASSWORD: "password"
+      DB_NAME: "search_engine"
+      # Redis config (using service name from docker-compose)
+      REDIS_ENABLED: "true"
+      REDIS_ADDR: "redis:6379"
+      REDIS_PASSWORD: ""
+      REDIS_DB: "0"
+      # Provider URLs
+      PROVIDER1_URL: "https://raw.githubusercontent.com/WEG-Technology/mock/refs/heads/main/v2/provider1"
+      PROVIDER2_URL: "https://raw.githubusercontent.com/WEG-Technology/mock/refs/heads/main/v2/provider2"
+      # Search config
+      SEARCH_MIN_FULLTEXT_LENGTH: "3"
+      SEARCH_CACHE_TTL_SECONDS: "60"
+      # Rate limit config
+      RATE_LIMIT_REQUESTS_PER_MINUTE: "60"
+      # Gin mode
+      GIN_MODE: "release"
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:8080/health || exit 1"]
+      interval: 30s
+      timeout: 3s
+      start_period: 10s
+      retries: 3
+    networks:
+      - search-engine-network
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: search-engine-frontend
+    ports:
+      - "3000:80"
+    environment:
+      VITE_API_BASE_URL: "http://localhost:8080/api/v1"
+    depends_on:
+      - backend
+    networks:
+      - search-engine-network
+    restart: unless-stopped
+
+volumes:
+  mysql_data:
+  redis_data:
+
+networks:
+  search-engine-network:
+    driver: bridge

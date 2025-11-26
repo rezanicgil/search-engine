@@ -1,0 +1,299 @@
+basePath: /api/v1
+definitions:
+  model.Content:
+    properties:
+      comments:
+        type: integer
+      created_at:
+        description: Timestamps
+        type: string
+      duration_seconds:
+        type: integer
+      external_id:
+        type: string
+      id:
+        type: integer
+      likes:
+        type: integer
+      provider:
+        allOf:
+        - $ref: '#/definitions/model.Provider'
+        description: Provider information (optional)
+      provider_id:
+        type: integer
+      published_at:
+        description: Common fields
+        type: string
+      reactions:
+        type: integer
+      reading_time:
+        description: |-
+          Article-specific metrics (NULL for videos)
+          These fields are populated when Type is "article"
+        type: integer
+      score:
+        type: number
+      tags:
+        description: Related data (loaded separately)
+        items:
+          type: string
+        type: array
+      title:
+        type: string
+      type:
+        $ref: '#/definitions/model.ContentType'
+      updated_at:
+        type: string
+      views:
+        description: |-
+          Video-specific metrics (NULL for articles)
+          These fields are populated when Type is "video"
+        type: integer
+    type: object
+  model.ContentType:
+    enum:
+    - video
+    - article
+    type: string
+    x-enum-varnames:
+    - ContentTypeVideo
+    - ContentTypeArticle
+  model.Provider:
+    properties:
+      created_at:
+        type: string
+      format:
+        $ref: '#/definitions/model.ProviderFormat'
+      id:
+        type: integer
+      last_fetched_at:
+        type: string
+      name:
+        type: string
+      rate_limit_per_minute:
+        type: integer
+      updated_at:
+        type: string
+      url:
+        type: string
+    type: object
+  model.ProviderFormat:
+    enum:
+    - json
+    - xml
+    type: string
+    x-enum-varnames:
+    - ProviderFormatJSON
+    - ProviderFormatXML
+  model.SearchResponse:
+    properties:
+      page:
+        description: Current page number
+        type: integer
+      per_page:
+        description: Items per page
+        type: integer
+      results:
+        description: Search results
+        items:
+          $ref: '#/definitions/model.Content'
+        type: array
+      total:
+        description: Total number of results
+        type: integer
+      total_pages:
+        description: Total number of pages
+        type: integer
+    type: object
+host: localhost:8080
+info:
+  contact:
+    email: rezanicgil@gmail.com
+    name: API Support
+  description: A search engine API that aggregates content from multiple providers,
+    ranks them by relevance score, and provides search, filtering, sorting, and pagination
+    capabilities.
+  license:
+    name: Apache 2.0
+    url: http://www.apache.org/licenses/LICENSE-2.0.html
+  termsOfService: http://swagger.io/terms/
+  title: Search Engine API
+  version: "1.0"
+paths:
+  /content/{id}:
+    get:
+      consumes:
+      - application/json
+      description: Get detailed information about a specific content item by its ID
+      parameters:
+      - description: Content ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/model.Content'
+        "400":
+          description: Invalid content ID
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Content not found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal server error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Get content by ID
+      tags:
+      - content
+  /health:
+    get:
+      consumes:
+      - application/json
+      description: Check if the server and database are running
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "503":
+          description: Service Unavailable
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Health check
+      tags:
+      - health
+  /providers:
+    get:
+      consumes:
+      - application/json
+      description: Get a list of all content providers
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/model.Provider'
+            type: array
+        "500":
+          description: Internal server error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Get providers list
+      tags:
+      - providers
+  /search:
+    get:
+      consumes:
+      - application/json
+      description: Search for content with filtering, sorting, and pagination. Results
+        are ranked by relevance score.
+      parameters:
+      - description: Search keyword (optional - if empty, returns all content)
+        in: query
+        name: query
+        type: string
+      - description: 'Filter by content type: video or article'
+        in: query
+        name: type
+        type: string
+      - description: Filter by provider ID
+        in: query
+        name: provider_id
+        type: integer
+      - description: Filter results published on/after this date (YYYY-MM-DD)
+        in: query
+        name: start_date
+        type: string
+      - description: Filter results published on/before this date (YYYY-MM-DD)
+        in: query
+        name: end_date
+        type: string
+      - description: 'Page number (default: 1)'
+        in: query
+        name: page
+        type: integer
+      - description: 'Items per page (default: 10, max: 100)'
+        in: query
+        name: per_page
+        type: integer
+      - description: 'Sort field: score, published_at, or title (default: score)'
+        in: query
+        name: sort_by
+        type: string
+      - description: 'Sort order: asc or desc (default: desc)'
+        in: query
+        name: sort_order
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/model.SearchResponse'
+        "400":
+          description: Invalid request parameters
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal server error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Search content
+      tags:
+      - search
+  /stats:
+    get:
+      consumes:
+      - application/json
+      description: Get statistics about the search engine including content counts,
+        provider information, and type distribution
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Internal server error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Get system statistics
+      tags:
+      - stats
+schemes:
+- http
+- https
+swagger: "2.0"
