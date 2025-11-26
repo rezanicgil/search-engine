@@ -3,7 +3,7 @@
 
 # Stage 1: Build stage
 # This stage compiles the Go application
-FROM golang:1.23-alpine AS builder
+FROM golang:1.24-alpine AS builder
 
 # Update package index and upgrade all packages to latest versions with security patches
 # Install build dependencies (git for go modules, ca-certificates for HTTPS)
