@@ -11,6 +11,9 @@ RUN apk update && \
     go install github.com/cosmtrek/air@v1.51.0 && \
     rm -rf /var/cache/apk/*
 
+# Add Go bin directory to PATH so air command is available
+ENV PATH="${PATH}:/go/bin"
+
 # Set working directory
 WORKDIR /app
 
@@ -22,5 +25,6 @@ RUN go mod download
 # Default command - Air will watch for changes and rebuild
 # Air config (.air.toml) will be available via volume mount
 # Air is installed in $GOPATH/bin (default: /go/bin)
-CMD ["/go/bin/air", "-c", ".air.toml"]
+# Use air command directly (should be in PATH after installation)
+CMD ["air", "-c", ".air.toml"]
 

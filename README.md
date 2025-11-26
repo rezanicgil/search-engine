@@ -69,24 +69,35 @@ search-engine/
    cd search-engine
    ```
 
-2. **Start all services**
+2. **Start all services with hot-reload**
    ```bash
    docker-compose up -d
    ```
+   
+   **Hot Reload Features:**
+   - ✅ Backend: Automatic rebuild and restart on Go file changes (using Air)
+   - ✅ Frontend: Automatic refresh on React/JS file changes (using Vite)
+   - ✅ Code changes are instantly reflected without manual restart
 
 3. **Run database migrations** (automatic on backend startup)
 
 4. **Sync data from providers**
    ```bash
-   cd backend
-   make sync
+   docker-compose exec backend air -c .air.toml &
+   # Or run sync command directly
+   docker-compose exec backend go run ./cmd/sync
    ```
 
 5. **Access the application**
-   - Frontend: http://localhost:3000
+   - Frontend: http://localhost:3000 (with hot-reload)
    - Backend API: http://localhost:8080
    - API Docs (Swagger): http://localhost:8080/swagger/index.html
    - Health Check: http://localhost:8080/health
+
+6. **View logs (with hot-reload output)**
+   ```bash
+   docker-compose logs -f backend frontend
+   ```
 
 ### Local Development
 
@@ -192,6 +203,7 @@ See `backend/.env.example` for all available options.
 - ✅ Swagger/OpenAPI documentation
 - ✅ Redux state management
 - ✅ Responsive UI with Tailwind CSS
+- ✅ **Hot Reload** - Automatic rebuild/refresh on code changes (Backend: Air, Frontend: Vite)
 
 ## 🧪 Testing
 
@@ -209,11 +221,32 @@ make seed  # Adds 50 test items for pagination testing
 
 ## 📝 Development Workflow
 
-1. **Start services**: `docker-compose up -d`
-2. **Sync providers**: `cd backend && make sync`
-3. **Add test data** (optional): `cd backend && make seed`
-4. **Develop**: Make changes, hot-reload enabled
-5. **Test**: Use Swagger UI or frontend at http://localhost:3000
+1. **Start services with hot-reload**: `docker-compose up -d`
+   - Backend automatically rebuilds on Go file changes
+   - Frontend automatically refreshes on React/JS file changes
+
+2. **Sync providers** (in a new terminal):
+   ```bash
+   docker-compose exec backend go run ./cmd/sync
+   ```
+
+3. **Add test data** (optional):
+   ```bash
+   docker-compose exec backend go run ./cmd/seed
+   ```
+
+4. **Develop**: 
+   - Edit backend files in `backend/` - changes are automatically detected and server restarts
+   - Edit frontend files in `frontend/` - changes are automatically reflected in browser
+   - No manual restart needed!
+
+5. **View logs**:
+   ```bash
+   docker-compose logs -f backend  # Backend logs with Air output
+   docker-compose logs -f frontend # Frontend logs with Vite output
+   ```
+
+6. **Test**: Use Swagger UI or frontend at http://localhost:3000
 
 ## 🔒 Security Features
 

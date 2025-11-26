@@ -41,11 +41,19 @@ services:
   backend:
     build:
       context: ./backend
-      dockerfile: docker/Dockerfile
+      dockerfile: docker/Dockerfile.dev
     container_name: search-engine-backend
     ports:
       - "8080:8080"
       - "8082:8082"
+    volumes:
+      # Mount source code for hot-reload
+      - ./backend:/app
+      # Exclude build artifacts and dependencies from host
+      - /app/tmp
+      - /app/bin
+      - /app/vendor
+      - backend_go_modules:/go/pkg/mod
     environment:
       # Server config
       SERVER_PORT: "8080"
@@ -69,8 +77,8 @@ services:
       SEARCH_CACHE_TTL_SECONDS: "60"
       # Rate limit config
       RATE_LIMIT_REQUESTS_PER_MINUTE: "60"
-      # Gin mode
-      GIN_MODE: "release"
+      # Gin mode (debug for development with hot-reload)
+      GIN_MODE: "debug"
     depends_on:
       mysql:
         condition: service_healthy
@@ -89,10 +97,15 @@ services:
   frontend:
     build:
       context: ./frontend
-      dockerfile: Dockerfile
+      dockerfile: Dockerfile.dev
     container_name: search-engine-frontend
     ports:
-      - "3000:80"
+      - "3000:3000"
+    volumes:
+      # Mount source code for hot-reload
+      - ./frontend:/app
+      # Exclude node_modules from host (use container's node_modules)
+      - /app/node_modules
     environment:
       VITE_API_BASE_URL: "http://localhost:8080/api/v1"
     depends_on:
@@ -104,6 +117,7 @@ services:
 volumes:
   mysql_data:
   redis_data:
+  backend_go_modules:
 
 networks:
   search-engine-network:

@@ -6,7 +6,6 @@
 *.dylib
 bin/
 dist/
-api
 *.out
 
 # Test binary
