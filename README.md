@@ -22,8 +22,6 @@ Bu proje **Layered Architecture (Katmanlı Mimari)** ve **Clean Architecture** p
 - **Cache**: Redis (optional, falls back to in-memory)
 - **Containerization**: Docker & Docker Compose
 
-**Detaylı mimari dokümantasyonu için:** [ARCHITECTURE.md](./ARCHITECTURE.md)
-
 ## 📁 Project Structure
 
 ```
