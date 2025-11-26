@@ -4,6 +4,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"log"
 	"net/http"
 	"os"
@@ -16,6 +17,8 @@ import (
 	"search-engine/backend/internal/handler"
 	"search-engine/backend/internal/middleware"
 	"search-engine/backend/internal/migration"
+	"search-engine/backend/internal/model"
+	"search-engine/backend/internal/provider"
 	"search-engine/backend/internal/repository"
 	"search-engine/backend/internal/service"
 	"search-engine/backend/pkg/cache"
@@ -88,6 +91,10 @@ func main() {
 
 	// Create HTTP server
 	app.createServer()
+
+	// Start initial sync from providers in background
+	// This ensures data is available when the server starts
+	go app.syncProvidersOnStartup(cfg)
 
 	// Start server with graceful shutdown
 	app.startServerWithGracefulShutdown()
@@ -278,4 +285,67 @@ func (a *App) startServerWithGracefulShutdown() {
 	}
 
 	log.Println("Server exited gracefully")
+}
+
+// syncProvidersOnStartup syncs data from providers when the server starts
+func (a *App) syncProvidersOnStartup(cfg *config.Config) {
+	if os.Getenv("AUTO_SYNC_ON_START") == "false" {
+		return
+	}
+
+	time.Sleep(2 * time.Second)
+	log.Println("Starting initial provider sync...")
+
+	providerRepo := repository.NewProviderRepository(repository.GetDB())
+	contentRepo := repository.NewContentRepository(repository.GetDB(), cfg.Search.MinFullTextLength)
+	tagRepo := repository.NewContentTagRepository(repository.GetDB())
+	manager := provider.NewManager(providerRepo, contentRepo, tagRepo)
+
+	// Ensure providers exist and register them
+	providers := []struct {
+		name, url string
+		format    model.ProviderFormat
+	}{
+		{"provider1", cfg.Provider.Provider1URL, model.ProviderFormatJSON},
+		{"provider2", cfg.Provider.Provider2URL, model.ProviderFormatXML},
+	}
+
+	for _, p := range providers {
+		existing, err := providerRepo.GetByName(p.name)
+		if err != nil && errors.Is(err, repository.ErrProviderNotFound) {
+			if err := providerRepo.Create(&model.Provider{
+				Name:               p.name,
+				URL:                p.url,
+				Format:             p.format,
+				RateLimitPerMinute: 60,
+			}); err != nil {
+				log.Printf("Warning: Failed to create provider %s: %v", p.name, err)
+			}
+		} else if err == nil {
+			existing.URL = p.url
+			existing.Format = p.format
+			existing.RateLimitPerMinute = 60
+			providerRepo.Update(existing)
+		}
+
+		if p.format == model.ProviderFormatJSON {
+			manager.RegisterProvider(provider.NewJSONProvider(p.name, p.url))
+		} else {
+			manager.RegisterProvider(provider.NewXMLProvider(p.name, p.url))
+		}
+	}
+
+	if err := manager.FetchAll(); err != nil {
+		log.Printf("Warning: Failed to fetch from providers: %v", err)
+		return
+	}
+
+	// Recalculate scores
+	scoringService := service.NewScoringService(contentRepo)
+	allProviders, _ := providerRepo.GetAll()
+	for _, p := range allProviders {
+		scoringService.RecalculateScoresForProvider(p.ID)
+	}
+
+	log.Println("Initial provider sync completed")
 }
