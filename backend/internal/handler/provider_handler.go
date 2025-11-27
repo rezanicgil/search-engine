@@ -4,7 +4,8 @@
 package handler
 
 import (
-	"net/http"
+	"search-engine/backend/internal/errors"
+	"search-engine/backend/internal/middleware"
 	"search-engine/backend/internal/repository"
 
 	"github.com/gin-gonic/gin"
@@ -36,14 +37,17 @@ func NewProviderHandler(providerRepo *repository.ProviderRepository) *ProviderHa
 func (h *ProviderHandler) GetProviders(c *gin.Context) {
 	providers, err := h.providerRepo.GetAll()
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"error":   "Failed to fetch providers",
-			"details": err.Error(),
-		})
+		// Check if it's already an AppError
+		if appErr := errors.AsAppError(err); appErr != nil {
+			middleware.HandleAppError(c, appErr)
+			return
+		}
+
+		// Wrap unknown errors
+		appErr := errors.NewDatabaseError("get all providers", err)
+		middleware.HandleAppError(c, appErr)
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"data": providers,
-	})
+	middleware.JSONSuccess(c, providers)
 }

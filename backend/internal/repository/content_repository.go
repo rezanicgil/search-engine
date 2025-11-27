@@ -3,14 +3,19 @@
 package repository
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"fmt"
+	apperrors "search-engine/backend/internal/errors"
 	"search-engine/backend/internal/model"
 	"strings"
+	"time"
 )
 
-var ErrContentNotFound = errors.New("content not found")
+// ErrContentNotFound is kept for backward compatibility
+// Use apperrors.ErrContentNotFound instead
+var ErrContentNotFound = apperrors.ErrContentNotFound
 
 // ContentRepository handles all database operations for content
 // This repository encapsulates content-related database queries including search
@@ -34,6 +39,11 @@ func NewContentRepository(db *sql.DB, minFullTextLength int) *ContentRepository 
 // Create inserts a new content item into the database
 // Returns the created content with its generated ID
 func (r *ContentRepository) Create(c *model.Content) error {
+	// Validate content before inserting
+	if err := model.ValidateContent(c); err != nil {
+		return apperrors.NewValidationErrorWithDetails("Content validation failed", err.Error())
+	}
+
 	query := `
 		INSERT INTO contents (
 			provider_id, external_id, title, type,
@@ -72,7 +82,8 @@ func (r *ContentRepository) Create(c *model.Content) error {
 
 // GetByID retrieves a content item by its ID
 // Returns sql.ErrNoRows if content is not found
-func (r *ContentRepository) GetByID(id int64) (*model.Content, error) {
+// ctx is used for timeout and cancellation support
+func (r *ContentRepository) GetByID(ctx context.Context, id int64) (*model.Content, error) {
 	query := `
 		SELECT id, provider_id, external_id, title, type,
 		       views, likes, duration_seconds,
@@ -83,7 +94,7 @@ func (r *ContentRepository) GetByID(id int64) (*model.Content, error) {
 	`
 	c := &model.Content{}
 
-	err := r.db.QueryRow(query, id).Scan(
+	err := r.db.QueryRowContext(ctx, query, id).Scan(
 		&c.ID,
 		&c.ProviderID,
 		&c.ExternalID,
@@ -102,9 +113,9 @@ func (r *ContentRepository) GetByID(id int64) (*model.Content, error) {
 	)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return nil, ErrContentNotFound
+			return nil, apperrors.ErrContentNotFound
 		}
-		return nil, fmt.Errorf("failed to get content by id: %w", err)
+		return nil, apperrors.NewDatabaseError("get content by id", err)
 	}
 
 	return c, nil
@@ -142,9 +153,9 @@ func (r *ContentRepository) GetByProviderAndExternalID(providerID int, externalI
 	)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return nil, ErrContentNotFound
+			return nil, apperrors.ErrContentNotFound
 		}
-		return nil, fmt.Errorf("failed to get content by provider and external id: %w", err)
+		return nil, apperrors.NewDatabaseError("get content by provider and external id", err)
 	}
 
 	return c, nil
@@ -153,6 +164,11 @@ func (r *ContentRepository) GetByProviderAndExternalID(providerID int, externalI
 // Update updates an existing content item
 // Updates all fields except ID and timestamps
 func (r *ContentRepository) Update(c *model.Content) error {
+	// Validate content before updating
+	if err := model.ValidateContent(c); err != nil {
+		return apperrors.NewValidationErrorWithDetails("Content validation failed", err.Error())
+	}
+
 	query := `
 		UPDATE contents
 		SET title = ?, type = ?,
@@ -214,10 +230,10 @@ func (r *ContentRepository) Delete(id int64) error {
 func (r *ContentRepository) Upsert(c *model.Content) error {
 	existing, err := r.GetByProviderAndExternalID(c.ProviderID, c.ExternalID)
 	if err != nil {
-		if errors.Is(err, ErrContentNotFound) {
+		if errors.Is(err, ErrContentNotFound) || errors.Is(err, apperrors.ErrContentNotFound) {
 			return r.Create(c)
 		}
-		return fmt.Errorf("failed to check existing content: %w", err)
+		return apperrors.NewDatabaseError("check existing content", err)
 	}
 
 	c.ID = existing.ID
@@ -226,7 +242,8 @@ func (r *ContentRepository) Upsert(c *model.Content) error {
 
 // Search searches for content based on the search request
 // Supports keyword search, type filtering, sorting, and pagination
-func (r *ContentRepository) Search(req *model.SearchRequest) ([]*model.Content, int, error) {
+// ctx is used for timeout and cancellation support
+func (r *ContentRepository) Search(ctx context.Context, req *model.SearchRequest) ([]*model.Content, int, error) {
 	// Build WHERE clause
 	whereClauses := []string{}
 	args := []interface{}{}
@@ -271,17 +288,46 @@ func (r *ContentRepository) Search(req *model.SearchRequest) ([]*model.Content, 
 		whereClause = "WHERE " + strings.Join(whereClauses, " AND ")
 	}
 
-	// Build ORDER BY clause
-	orderBy := "ORDER BY " + req.SortBy + " " + strings.ToUpper(req.SortOrder)
-	// Add secondary sort by ID for consistent ordering
-	orderBy += ", id DESC"
+	// Build ORDER BY clause with whitelist validation to prevent SQL injection
+	validSortFields := map[string]bool{
+		"score":        true,
+		"published_at": true,
+		"title":        true,
+		"id":           true,
+	}
+	sortBy := req.SortBy
+	if !validSortFields[sortBy] {
+		sortBy = "score" // Default to score if invalid
+	}
+
+	validSortOrders := map[string]bool{
+		"ASC":  true,
+		"DESC": true,
+	}
+	sortOrder := strings.ToUpper(req.SortOrder)
+	if !validSortOrders[sortOrder] {
+		sortOrder = "DESC" // Default to DESC if invalid
+	}
+
+	orderBy := fmt.Sprintf("ORDER BY %s %s, id DESC", sortBy, sortOrder)
 
 	// Count total results (for pagination)
+	// Use a separate context with timeout for COUNT query to prevent it from blocking too long
+	// COUNT can be slow on large tables, so we give it a reasonable timeout
+	countCtx, countCancel := context.WithTimeout(ctx, 10*time.Second)
+	defer countCancel()
+
 	countQuery := fmt.Sprintf("SELECT COUNT(*) FROM contents %s", whereClause)
 	var total int
-	err := r.db.QueryRow(countQuery, args...).Scan(&total)
+	err := r.db.QueryRowContext(countCtx, countQuery, args...).Scan(&total)
 	if err != nil {
-		return nil, 0, fmt.Errorf("failed to count results: %w", err)
+		if countCtx.Err() == context.DeadlineExceeded {
+			// If COUNT times out, estimate total based on returned results
+			// This allows pagination to work even if COUNT is slow
+			total = -1 // Use -1 to indicate estimated/unknown total
+		} else {
+			return nil, 0, apperrors.NewDatabaseError("count results", err)
+		}
 	}
 
 	// Build SELECT query with pagination
@@ -298,9 +344,9 @@ func (r *ContentRepository) Search(req *model.SearchRequest) ([]*model.Content, 
 
 	args = append(args, req.PerPage, req.GetOffset())
 
-	rows, err := r.db.Query(query, args...)
+	rows, err := r.db.QueryContext(ctx, query, args...)
 	if err != nil {
-		return nil, 0, fmt.Errorf("failed to search content: %w", err)
+		return nil, 0, apperrors.NewDatabaseError("search content", err)
 	}
 	defer rows.Close()
 
@@ -400,7 +446,8 @@ func (r *ContentRepository) LoadTags(content *model.Content) error {
 
 // LoadTagsBatch loads tags for multiple content items efficiently
 // This reduces the number of database queries when loading multiple contents
-func (r *ContentRepository) LoadTagsBatch(contents []*model.Content) error {
+// ctx is used for timeout and cancellation support
+func (r *ContentRepository) LoadTagsBatch(ctx context.Context, contents []*model.Content) error {
 	if len(contents) == 0 {
 		return nil
 	}
@@ -428,7 +475,7 @@ func (r *ContentRepository) LoadTagsBatch(contents []*model.Content) error {
 		args[i] = id
 	}
 
-	rows, err := r.db.Query(query, args...)
+	rows, err := r.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return fmt.Errorf("failed to load tags batch: %w", err)
 	}
@@ -459,14 +506,15 @@ func (r *ContentRepository) LoadTagsBatch(contents []*model.Content) error {
 
 // GetTagsByContentID retrieves all tags for a specific content item
 // Returns an empty slice if no tags exist
-func (r *ContentRepository) GetTagsByContentID(contentID int64) ([]string, error) {
+// ctx is used for timeout and cancellation support
+func (r *ContentRepository) GetTagsByContentID(ctx context.Context, contentID int64) ([]string, error) {
 	query := `
 		SELECT tag
 		FROM content_tags
 		WHERE content_id = ?
 		ORDER BY tag
 	`
-	rows, err := r.db.Query(query, contentID)
+	rows, err := r.db.QueryContext(ctx, query, contentID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get tags by content id: %w", err)
 	}

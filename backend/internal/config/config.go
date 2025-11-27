@@ -43,8 +43,10 @@ type ProviderConfig struct {
 
 // SearchConfig holds search-related configuration
 type SearchConfig struct {
-	MinFullTextLength int
-	CacheTTLSeconds   int
+	MinFullTextLength         int
+	CacheTTLSeconds           int
+	QueryTimeoutSeconds       int // Timeout for search queries (default: 15)
+	SimpleQueryTimeoutSeconds int // Timeout for simple queries like GetByID (default: 5)
 }
 
 // RateLimitConfig holds global rate limiting configuration
@@ -84,8 +86,10 @@ func Load() *Config {
 			Provider2URL: getEnv("PROVIDER2_URL", "https://raw.githubusercontent.com/WEG-Technology/mock/refs/heads/main/v2/provider2"),
 		},
 		Search: SearchConfig{
-			MinFullTextLength: getEnvInt("SEARCH_MIN_FULLTEXT_LENGTH", 3),
-			CacheTTLSeconds:   getEnvInt("SEARCH_CACHE_TTL_SECONDS", 60),
+			MinFullTextLength:         getEnvInt("SEARCH_MIN_FULLTEXT_LENGTH", 3),
+			CacheTTLSeconds:           getEnvInt("SEARCH_CACHE_TTL_SECONDS", 60),
+			QueryTimeoutSeconds:       getEnvInt("SEARCH_QUERY_TIMEOUT_SECONDS", 30),        // Increased to 30s for large datasets
+			SimpleQueryTimeoutSeconds: getEnvInt("SEARCH_SIMPLE_QUERY_TIMEOUT_SECONDS", 10), // Increased to 10s
 		},
 		Rate: RateLimitConfig{
 			RequestsPerMinute: getEnvInt("RATE_LIMIT_REQUESTS_PER_MINUTE", 60),

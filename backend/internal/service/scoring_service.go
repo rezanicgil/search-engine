@@ -3,6 +3,7 @@
 package service
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"search-engine/backend/internal/repository"
@@ -25,8 +26,11 @@ func NewScoringService(contentRepo *repository.ContentRepository) *ScoringServic
 // CalculateScoreForContent calculates and updates the score for a single content item
 // This is used when content is created or updated
 func (s *ScoringService) CalculateScoreForContent(contentID int64) error {
+	// Use background context for scoring operations (not tied to HTTP request)
+	ctx := context.Background()
+
 	// Get content from database
-	content, err := s.contentRepo.GetByID(contentID)
+	content, err := s.contentRepo.GetByID(ctx, contentID)
 	if err != nil {
 		return fmt.Errorf("failed to get content: %w", err)
 	}

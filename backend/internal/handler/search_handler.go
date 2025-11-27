@@ -3,8 +3,9 @@
 package handler
 
 import (
-	"log"
-	"net/http"
+	"context"
+	"search-engine/backend/internal/errors"
+	"search-engine/backend/internal/middleware"
 	"search-engine/backend/internal/model"
 	"search-engine/backend/internal/service"
 
@@ -51,32 +52,38 @@ func (h *SearchHandler) Search(c *gin.Context) {
 	// Gin automatically parses query string parameters
 	var req model.SearchRequest
 	if err := c.ShouldBindQuery(&req); err != nil {
-		// Return 400 Bad Request if required parameters are missing or invalid
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error":   "Invalid request parameters",
-			"details": err.Error(),
-		})
+		// Use custom error type for validation errors
+		appErr := errors.NewValidationErrorWithDetails("Invalid request parameters", err.Error())
+		middleware.HandleAppError(c, appErr)
 		return
 	}
 
 	// Perform the search using the service
 	// The service handles all business logic and data processing
-	response, err := h.searchService.Search(&req)
+	// Pass request context for timeout and cancellation support
+	response, err := h.searchService.Search(c.Request.Context(), &req)
 	if err != nil {
-		// Log error for monitoring and debugging
-		// In production, you might want to use structured logging
-		log.Printf("Search error: %v", err)
+		// Check if it's already an AppError
+		if appErr := errors.AsAppError(err); appErr != nil {
+			middleware.HandleAppError(c, appErr)
+			return
+		}
 
-		// Return 500 Internal Server Error if search fails
-		// Don't expose internal error details in production
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"error":   "Failed to perform search",
-			"message": "An error occurred while processing your search request. Please try again later.",
-		})
+		// Check for context timeout
+		if err == context.DeadlineExceeded {
+			appErr := errors.NewQueryTimeoutError("search")
+			middleware.HandleAppError(c, appErr)
+			return
+		}
+
+		// Wrap unknown errors
+		appErr := errors.NewServiceError("search", err)
+		middleware.HandleAppError(c, appErr)
 		return
 	}
 
 	// Return successful response with search results
-	// Status 200 OK indicates successful search
-	c.JSON(http.StatusOK, response)
+	// SearchResponse already has its own structure, so we wrap it in data field
+	// for consistency with other endpoints
+	middleware.JSONSuccess(c, response)
 }

@@ -54,3 +54,4 @@ coverage/
 *.dll
 *.so
 *.dylib
+bin/

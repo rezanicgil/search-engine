@@ -32,6 +32,13 @@ apiClient.interceptors.response.use(
     // Handle common errors
     if (error.response) {
       // Server responded with error status
+      // Backend returns: { error: { code, message, details? }, trace_id }
+      const errorData = error.response.data;
+      if (errorData?.error) {
+        // Extract error message from new format
+        error.response.data.message = errorData.error.message || errorData.error.code || 'An error occurred';
+        error.response.data.code = errorData.error.code;
+      }
       console.error('API Error:', error.response.data);
     } else if (error.request) {
       // Request made but no response received
@@ -61,7 +68,8 @@ apiClient.interceptors.response.use(
 export const searchContent = async (params) => {
   try {
     const response = await apiClient.get('/search', { params });
-    return response.data;
+    // Backend returns: { data: { results, total, ... }, trace_id }
+    return response.data.data || response.data;
   } catch (error) {
     throw error;
   }

@@ -6,11 +6,14 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	apperrors "search-engine/backend/internal/errors"
 	"search-engine/backend/internal/model"
 	"time"
 )
 
-var ErrProviderNotFound = errors.New("provider not found")
+// ErrProviderNotFound is kept for backward compatibility
+// Use apperrors.ErrProviderNotFound instead
+var ErrProviderNotFound = apperrors.ErrProviderNotFound
 
 // ProviderRepository handles all database operations for providers
 // This repository encapsulates provider-related database queries
@@ -27,6 +30,11 @@ func NewProviderRepository(db *sql.DB) *ProviderRepository {
 // Create inserts a new provider into the database
 // Returns the created provider with its generated ID
 func (r *ProviderRepository) Create(p *model.Provider) error {
+	// Validate provider before inserting
+	if err := model.ValidateProvider(p); err != nil {
+		return apperrors.NewValidationErrorWithDetails("Provider validation failed", err.Error())
+	}
+
 	query := `
 		INSERT INTO providers (name, url, format, rate_limit_per_minute)
 		VALUES (?, ?, ?, ?)
@@ -69,9 +77,9 @@ func (r *ProviderRepository) GetByID(id int) (*model.Provider, error) {
 	)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return nil, ErrProviderNotFound
+			return nil, apperrors.ErrProviderNotFound
 		}
-		return nil, fmt.Errorf("failed to get provider by id: %w", err)
+		return nil, apperrors.NewDatabaseError("get provider by id", err)
 	}
 
 	if lastFetchedAt.Valid {
@@ -105,9 +113,9 @@ func (r *ProviderRepository) GetByName(name string) (*model.Provider, error) {
 	)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return nil, ErrProviderNotFound
+			return nil, apperrors.ErrProviderNotFound
 		}
-		return nil, fmt.Errorf("failed to get provider by name: %w", err)
+		return nil, apperrors.NewDatabaseError("get provider by name", err)
 	}
 
 	if lastFetchedAt.Valid {
@@ -179,6 +187,11 @@ func (r *ProviderRepository) UpdateLastFetched(id int, fetchedAt time.Time) erro
 // Update updates provider information
 // Only updates non-zero fields
 func (r *ProviderRepository) Update(p *model.Provider) error {
+	// Validate provider before updating
+	if err := model.ValidateProvider(p); err != nil {
+		return apperrors.NewValidationErrorWithDetails("Provider validation failed", err.Error())
+	}
+
 	query := `
 		UPDATE providers
 		SET name = ?, url = ?, format = ?, rate_limit_per_minute = ?,

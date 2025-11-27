@@ -1,7 +1,7 @@
 // Dashboard.jsx - Main search dashboard page
 // Uses Redux for state management
 
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import { useAppDispatch, useAppSelector } from '../store/hooks';
 import SearchBar from '../components/SearchBar';
 import FilterBar from '../components/FilterBar';
@@ -18,6 +18,11 @@ import { fetchStats, toggleStats } from '../store/slices/statsSlice';
 
 const Dashboard = () => {
   const dispatch = useAppDispatch();
+  const initialLoadRef = useRef(false);
+  const lastSearchRef = useRef({
+    key: '',
+    timestamp: 0,
+  });
 
   // Redux state
   const { query, results, loading, error, pagination, filters } = useAppSelector(
@@ -28,6 +33,11 @@ const Dashboard = () => {
 
   // Load providers and stats on mount
   useEffect(() => {
+    if (initialLoadRef.current) {
+      return;
+    }
+    initialLoadRef.current = true;
+
     dispatch(fetchProviders());
     dispatch(fetchStats());
   }, [dispatch]);
@@ -35,15 +45,28 @@ const Dashboard = () => {
   // Perform search when query or filters change
   // On initial load or when filters change, fetch all content if no query
   useEffect(() => {
+    const trimmedQuery = query.trim();
     const searchParams = {
       ...filters,
     };
-    
-    // Add query only if it's not empty
-    if (query.trim()) {
-      searchParams.query = query.trim();
+
+    if (trimmedQuery) {
+      searchParams.query = trimmedQuery;
+    } else {
+      delete searchParams.query;
     }
-    
+
+    const searchKey = JSON.stringify(searchParams);
+    const now = Date.now();
+    const isDuplicateRequest =
+      lastSearchRef.current.key === searchKey &&
+      now - lastSearchRef.current.timestamp < 200;
+
+    if (isDuplicateRequest) {
+      return;
+    }
+
+    lastSearchRef.current = { key: searchKey, timestamp: now };
     dispatch(performSearch(searchParams));
   }, [dispatch, query, filters]);
 

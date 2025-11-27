@@ -3,8 +3,10 @@
 package service
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
+	"search-engine/backend/internal/errors"
 	"search-engine/backend/internal/model"
 	"search-engine/backend/internal/repository"
 	"search-engine/backend/pkg/cache"
@@ -14,28 +16,41 @@ import (
 // SearchService handles search operations
 // This service orchestrates search queries, result processing, and response formatting
 type SearchService struct {
-	contentRepo *repository.ContentRepository
-	cache       cache.Cache
-	cacheTTL    time.Duration
+	contentRepo        *repository.ContentRepository
+	cache              cache.Cache
+	cacheTTL           time.Duration
+	queryTimeout       time.Duration
+	simpleQueryTimeout time.Duration
 }
 
 // NewSearchService creates a new SearchService instance
 // cache can be nil to disable caching.
-func NewSearchService(contentRepo *repository.ContentRepository, cache cache.Cache, cacheTTL time.Duration) *SearchService {
+// queryTimeout is the timeout for search queries (default: 15s)
+// simpleQueryTimeout is the timeout for simple queries like GetByID (default: 5s)
+func NewSearchService(contentRepo *repository.ContentRepository, cache cache.Cache, cacheTTL, queryTimeout, simpleQueryTimeout time.Duration) *SearchService {
 	if cacheTTL <= 0 {
 		cacheTTL = time.Minute
 	}
+	if queryTimeout <= 0 {
+		queryTimeout = 15 * time.Second
+	}
+	if simpleQueryTimeout <= 0 {
+		simpleQueryTimeout = 5 * time.Second
+	}
 	return &SearchService{
-		contentRepo: contentRepo,
-		cache:       cache,
-		cacheTTL:    cacheTTL,
+		contentRepo:        contentRepo,
+		cache:              cache,
+		cacheTTL:           cacheTTL,
+		queryTimeout:       queryTimeout,
+		simpleQueryTimeout: simpleQueryTimeout,
 	}
 }
 
 // Search performs a search query and returns formatted results
 // This is the main entry point for search operations
 // It handles validation, searching, tag loading, and response formatting
-func (s *SearchService) Search(req *model.SearchRequest) (*model.SearchResponse, error) {
+// ctx is used for timeout and cancellation support
+func (s *SearchService) Search(ctx context.Context, req *model.SearchRequest) (*model.SearchResponse, error) {
 	// Validate and set default values for the request
 	// This ensures we have valid parameters even if client doesn't provide them
 	req.Validate()
@@ -56,21 +71,40 @@ func (s *SearchService) Search(req *model.SearchRequest) (*model.SearchResponse,
 		}
 	}
 
+	// Apply timeout for search query (longer timeout for complex searches)
+	searchCtx, cancel := context.WithTimeout(ctx, s.queryTimeout)
+	defer cancel()
+
 	// Perform the search using the repository
 	// The repository handles the actual database query with filtering and sorting
-	contents, total, err := s.contentRepo.Search(req)
+	contents, total, err := s.contentRepo.Search(searchCtx, req)
 	if err != nil {
-		return nil, fmt.Errorf("failed to search content: %w", err)
+		// Check if it's already an AppError
+		if appErr := errors.AsAppError(err); appErr != nil {
+			return nil, appErr
+		}
+
+		if searchCtx.Err() == context.DeadlineExceeded {
+			return nil, errors.NewQueryTimeoutError("search")
+		}
+		return nil, errors.NewServiceError("search content", err)
 	}
 
 	// Load tags for all content items in batch
 	// This is more efficient than loading tags one by one
+	// Use shorter timeout for tag loading (simpler query)
 	if len(contents) > 0 {
-		if err := s.contentRepo.LoadTagsBatch(contents); err != nil {
+		tagCtx, tagCancel := context.WithTimeout(ctx, s.simpleQueryTimeout)
+		if err := s.contentRepo.LoadTagsBatch(tagCtx, contents); err != nil {
 			// Log error but don't fail the entire search
 			// Tags are optional metadata
-			fmt.Printf("Warning: failed to load tags: %v\n", err)
+			if tagCtx.Err() == context.DeadlineExceeded {
+				fmt.Printf("Warning: tag loading timeout after %v\n", s.simpleQueryTimeout)
+			} else {
+				fmt.Printf("Warning: failed to load tags: %v\n", err)
+			}
 		}
+		tagCancel()
 	}
 
 	// Convert repository results to response format

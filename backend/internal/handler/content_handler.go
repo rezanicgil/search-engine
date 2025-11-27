@@ -4,23 +4,31 @@
 package handler
 
 import (
-	"log"
-	"net/http"
+	"context"
+	"search-engine/backend/internal/errors"
+	"search-engine/backend/internal/middleware"
 	"search-engine/backend/internal/repository"
 	"strconv"
+	"time"
 
 	"github.com/gin-gonic/gin"
 )
 
 // ContentHandler handles content-related HTTP requests
 type ContentHandler struct {
-	contentRepo *repository.ContentRepository
+	contentRepo        *repository.ContentRepository
+	simpleQueryTimeout time.Duration
 }
 
 // NewContentHandler creates a new ContentHandler instance
-func NewContentHandler(contentRepo *repository.ContentRepository) *ContentHandler {
+// simpleQueryTimeout is the timeout for simple queries like GetByID (default: 5s)
+func NewContentHandler(contentRepo *repository.ContentRepository, simpleQueryTimeout time.Duration) *ContentHandler {
+	if simpleQueryTimeout <= 0 {
+		simpleQueryTimeout = 5 * time.Second
+	}
 	return &ContentHandler{
-		contentRepo: contentRepo,
+		contentRepo:        contentRepo,
+		simpleQueryTimeout: simpleQueryTimeout,
 	}
 }
 
@@ -43,34 +51,51 @@ func (h *ContentHandler) GetContentByID(c *gin.Context) {
 	idStr := c.Param("id")
 	id, err := strconv.ParseInt(idStr, 10, 64)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error":   "Invalid content ID",
-			"details": "Content ID must be a valid integer",
-		})
+		appErr := errors.NewInvalidIDError("content")
+		middleware.HandleAppError(c, appErr)
 		return
 	}
 
-	// Get content from repository
-	content, err := h.contentRepo.GetByID(id)
+	// Apply timeout for simple query
+	ctx, cancel := context.WithTimeout(c.Request.Context(), h.simpleQueryTimeout)
+	defer cancel()
+
+	// Get content from repository with context for timeout and cancellation
+	content, err := h.contentRepo.GetByID(ctx, id)
 	if err != nil {
-		if err == repository.ErrContentNotFound {
-			c.JSON(http.StatusNotFound, gin.H{
-				"error":   "Content not found",
-				"message": "No content found with the specified ID",
-			})
+		// Check for timeout
+		if ctx.Err() == context.DeadlineExceeded {
+			appErr := errors.NewRequestTimeoutErrorWithDuration(h.simpleQueryTimeout.String())
+			middleware.HandleAppError(c, appErr)
 			return
 		}
-		// Log error for monitoring
-		log.Printf("Error fetching content %d: %v", id, err)
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"error":   "Failed to fetch content",
-			"message": "An error occurred while fetching content. Please try again later.",
-		})
+
+		// Check for not found first (before checking if it's AppError)
+		// This allows us to add details (like ID) to the error
+		if err == repository.ErrContentNotFound || err == errors.ErrContentNotFound {
+			appErr := errors.NewContentNotFoundErrorWithID(id)
+			middleware.HandleAppError(c, appErr)
+			return
+		}
+
+		// Check if it's already an AppError
+		if appErr := errors.AsAppError(err); appErr != nil {
+			// If it's a not found error without details, add ID
+			if appErr.Code == errors.ErrorCodeContentNotFound && appErr.Details == "" {
+				appErr = errors.NewContentNotFoundErrorWithID(id)
+			}
+			middleware.HandleAppError(c, appErr)
+			return
+		}
+
+		// Wrap unknown errors
+		appErr := errors.NewDatabaseError("get content by id", err)
+		middleware.HandleAppError(c, appErr)
 		return
 	}
 
-	// Load tags for the content
-	tags, err := h.contentRepo.GetTagsByContentID(id)
+	// Load tags for the content (use same timeout)
+	tags, err := h.contentRepo.GetTagsByContentID(ctx, id)
 	if err != nil {
 		// Log error but don't fail the request
 		// Tags are optional metadata
@@ -78,7 +103,5 @@ func (h *ContentHandler) GetContentByID(c *gin.Context) {
 		content.Tags = tags
 	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"data": content,
-	})
+	middleware.JSONSuccess(c, content)
 }

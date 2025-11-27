@@ -88,7 +88,13 @@ type SearchResponse struct {
 
 // CalculateTotalPages computes the total number of pages based on total results
 // Helper method for pagination metadata
+// If total is -1 (unknown/estimated), total_pages will be 0
 func (r *SearchResponse) CalculateTotalPages() {
+	if r.Total < 0 {
+		// Total is unknown (e.g., COUNT query timed out)
+		r.TotalPages = 0
+		return
+	}
 	if r.PerPage > 0 {
 		r.TotalPages = (r.Total + r.PerPage - 1) / r.PerPage // Ceiling division
 	} else {

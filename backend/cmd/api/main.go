@@ -54,6 +54,7 @@ type App struct {
 	server        *http.Server
 	redisClient   *redis.Client
 	cacheInstance cache.Cache
+	startTime     time.Time // Track server start time for uptime calculation
 }
 
 func main() {
@@ -74,8 +75,9 @@ func main() {
 
 	// Create application instance
 	app := &App{
-		config: cfg,
-		router: gin.New(),
+		config:    cfg,
+		router:    gin.New(),
+		startTime: time.Now(),
 	}
 
 	// Initialize cache and Redis
@@ -168,6 +170,9 @@ func (a *App) setupMiddleware() {
 	a.router.Use(middleware.CORSMiddleware())
 	a.router.Use(middleware.SecurityHeadersMiddleware())
 
+	// Error handling middleware (should be early in the chain)
+	a.router.Use(middleware.ErrorHandlerMiddleware())
+
 	// Rate limiting middleware
 	rateLimiter := a.createRateLimiter()
 	a.router.Use(rateLimiter)
@@ -218,11 +223,13 @@ func (a *App) setupAPIRoutes(api *gin.RouterGroup) {
 
 	// Initialize services
 	cacheTTL := time.Duration(a.config.Search.CacheTTLSeconds) * time.Second
-	searchService := service.NewSearchService(contentRepo, a.cacheInstance, cacheTTL)
+	queryTimeout := time.Duration(a.config.Search.QueryTimeoutSeconds) * time.Second
+	simpleQueryTimeout := time.Duration(a.config.Search.SimpleQueryTimeoutSeconds) * time.Second
+	searchService := service.NewSearchService(contentRepo, a.cacheInstance, cacheTTL, queryTimeout, simpleQueryTimeout)
 
 	// Initialize handlers
 	searchHandler := handler.NewSearchHandler(searchService)
-	contentHandler := handler.NewContentHandler(contentRepo)
+	contentHandler := handler.NewContentHandler(contentRepo, simpleQueryTimeout)
 	providerHandler := handler.NewProviderHandler(providerRepo)
 	statsHandler := handler.NewStatsHandler(contentRepo, providerRepo)
 
@@ -240,10 +247,96 @@ func (a *App) setupAPIRoutes(api *gin.RouterGroup) {
 }
 
 // healthCheck handles health check requests
+// Returns detailed system status including database and Redis connectivity
+//
+// @Summary     Health check
+// @Description Get detailed system health status including database and Redis connectivity, uptime, and component statistics
+// @Tags        health
+// @Accept      json
+// @Produce     json
+// @Success     200  {object}  map[string]interface{}  "System is healthy"
+// @Success     503  {object}  map[string]interface{}  "System is degraded (some components unhealthy)"
+// @Router      /health [get]
 func (a *App) healthCheck(c *gin.Context) {
-	c.JSON(http.StatusOK, gin.H{
-		"status":  "OK",
-		"message": "Search engine API is running",
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
+	defer cancel()
+
+	health := gin.H{
+		"status":     "OK",
+		"timestamp":  time.Now().UTC().Format(time.RFC3339),
+		"uptime":     time.Since(a.startTime).String(),
+		"version":    "1.0.0",
+		"components": gin.H{},
+	}
+
+	// Check database connectivity
+	dbStatus := gin.H{
+		"status": "healthy",
+		"type":   "MySQL",
+	}
+	if err := repository.GetDB().PingContext(ctx); err != nil {
+		dbStatus["status"] = "unhealthy"
+		dbStatus["error"] = err.Error()
+		health["status"] = "degraded"
+	} else {
+		// Get database stats
+		stats := repository.GetDB().Stats()
+		dbStatus["stats"] = gin.H{
+			"open_connections":     stats.OpenConnections,
+			"in_use":               stats.InUse,
+			"idle":                 stats.Idle,
+			"wait_count":           stats.WaitCount,
+			"wait_duration":        stats.WaitDuration.String(),
+			"max_idle_closed":      stats.MaxIdleClosed,
+			"max_idle_time_closed": stats.MaxIdleTimeClosed,
+			"max_lifetime_closed":  stats.MaxLifetimeClosed,
+		}
+	}
+	health["components"].(gin.H)["database"] = dbStatus
+
+	// Check Redis connectivity
+	redisStatus := gin.H{
+		"status": "not_configured",
+		"type":   "Redis",
+	}
+	if a.config.Redis.Enabled {
+		if a.redisClient != nil {
+			redisCtx, redisCancel := context.WithTimeout(ctx, 2*time.Second)
+			if err := a.redisClient.Ping(redisCtx).Err(); err != nil {
+				redisStatus["status"] = "unhealthy"
+				redisStatus["error"] = err.Error()
+				health["status"] = "degraded"
+			} else {
+				redisStatus["status"] = "healthy"
+				// Get Redis info
+				info, err := a.redisClient.Info(redisCtx, "server").Result()
+				if err == nil {
+					redisStatus["info_available"] = true
+					// Extract version if available
+					if len(info) > 0 {
+						redisStatus["info_length"] = len(info)
+					}
+				}
+			}
+			redisCancel()
+		} else {
+			redisStatus["status"] = "unavailable"
+			redisStatus["message"] = "Redis client not initialized, using in-memory cache"
+		}
+	} else {
+		redisStatus["status"] = "disabled"
+		redisStatus["message"] = "Redis is disabled, using in-memory cache"
+	}
+	health["components"].(gin.H)["redis"] = redisStatus
+
+	// Determine overall status code
+	statusCode := http.StatusOK
+	if health["status"] == "degraded" {
+		statusCode = http.StatusServiceUnavailable
+	}
+
+	c.JSON(statusCode, gin.H{
+		"health": health,
 	})
 }
 

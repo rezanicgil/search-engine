@@ -4,7 +4,8 @@
 package handler
 
 import (
-	"net/http"
+	"search-engine/backend/internal/errors"
+	"search-engine/backend/internal/middleware"
 	"search-engine/backend/internal/repository"
 
 	"github.com/gin-gonic/gin"
@@ -38,20 +39,30 @@ func NewStatsHandler(contentRepo *repository.ContentRepository, providerRepo *re
 func (h *StatsHandler) GetStats(c *gin.Context) {
 	stats, err := h.contentRepo.GetStats()
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"error":   "Failed to fetch statistics",
-			"details": err.Error(),
-		})
+		// Check if it's already an AppError
+		if appErr := errors.AsAppError(err); appErr != nil {
+			middleware.HandleAppError(c, appErr)
+			return
+		}
+
+		// Wrap unknown errors
+		appErr := errors.NewDatabaseError("get statistics", err)
+		middleware.HandleAppError(c, appErr)
 		return
 	}
 
 	// Get provider count
 	providers, err := h.providerRepo.GetAll()
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"error":   "Failed to fetch provider statistics",
-			"details": err.Error(),
-		})
+		// Check if it's already an AppError
+		if appErr := errors.AsAppError(err); appErr != nil {
+			middleware.HandleAppError(c, appErr)
+			return
+		}
+
+		// Wrap unknown errors
+		appErr := errors.NewDatabaseError("get provider statistics", err)
+		middleware.HandleAppError(c, appErr)
 		return
 	}
 
@@ -60,7 +71,5 @@ func (h *StatsHandler) GetStats(c *gin.Context) {
 		"list":  providers,
 	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"data": stats,
-	})
+	middleware.JSONSuccess(c, stats)
 }
