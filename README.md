@@ -26,7 +26,7 @@ flowchart LR
 
 The sync identifies content by provider and external ID. A later sequential sync can update an existing record. The current upsert reads before it writes, so schedule a single sync worker when using the same feeds. Content and tags are written separately. Inspect sync errors before treating a run as complete.
 
-The backend test suite covers parsing migration statements. It does not establish provider availability, search throughput or safe concurrent ingestion. The Compose environment is intended for local development.
+The backend unit suite covers parsing migration statements. The [integration workflow](.github/workflows/search.yml) starts the API against a disposable MySQL 8 database, applies the application migrations, and checks full-text search, short substring queries, filtering, ranking and pagination over HTTP. It does not establish provider availability, search throughput or safe concurrent ingestion. The Compose environment is intended for local development.
 
 ## 📁 Project Structure
 

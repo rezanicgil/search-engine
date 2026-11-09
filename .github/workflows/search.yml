@@ -1,0 +1,51 @@
+name: Search API integration
+on:
+  push:
+    branches: [main]
+    paths: ['backend/**', '.github/workflows/search.yml']
+  pull_request:
+    paths: ['backend/**', '.github/workflows/search.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  search:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: backend
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: local-test-only
+          MYSQL_DATABASE: search_test
+          MYSQL_USER: search_test
+          MYSQL_PASSWORD: local-test-only
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd "mysqladmin ping -h localhost"
+          --health-interval 5s --health-timeout 5s --health-retries 20
+    env:
+      DB_HOST: 127.0.0.1
+      DB_NAME: search_test
+      DB_USER: search_test
+      DB_PASSWORD: local-test-only
+      REDIS_ENABLED: "false"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
+      - run: go test ./...
+      - run: go build -o "$RUNNER_TEMP/search-api" ./cmd/api
+      - name: Search a seeded MySQL database through the HTTP API
+        run: |
+          "$RUNNER_TEMP/search-api" > "$RUNNER_TEMP/search-api.log" 2>&1 &
+          pid=$!
+          trap 'kill "$pid" 2>/dev/null || true' EXIT
+          curl --retry 30 --retry-connrefused --retry-delay 1 -fsS http://localhost:8080/health > /dev/null || { cat "$RUNNER_TEMP/search-api.log"; exit 1; }
+          bash tests/search-smoke.sh
