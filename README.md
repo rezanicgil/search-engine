@@ -18,6 +18,7 @@ flowchart LR
 
 ### Decisions and trade-offs
 
+- Each feed adapts its wire format to the same [Go interface](backend/internal/provider/base_provider.go). The [JSON](backend/internal/provider/json_provider.go) and [XML](backend/internal/provider/xml_provider.go) implementations parse their own responses. The [sync manager](backend/internal/provider/manager.go) calls the same fetch method for both and owns persistence. A third feed can plug into the manager once its fields map to the shared content model. A change to that model still needs review across providers.
 - MySQL runs full-text title searches and falls back to a substring query for short input. This keeps ingestion and search in one database. Short substring queries can scan more rows.
 - The sync command calculates ranking from provider weight, freshness and engagement. Reads can sort by a stored score, but freshness reflects the last recalculation.
 - Search results have a TTL. Repeated queries can reuse results, but a cached result can lag behind the latest sync.
