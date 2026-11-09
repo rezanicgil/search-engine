@@ -124,7 +124,7 @@ func logError(c *gin.Context, appErr *errors.AppError, traceID string) {
 		logMsg += fmt.Sprintf(" | underlying_error=%v", appErr.Err)
 	}
 
-	log.Printf(logMsg)
+	log.Print(logMsg)
 }
 
 // HandleError is a helper function to set an error in Gin context

@@ -4,23 +4,29 @@ A full-stack search engine application that aggregates content from multiple pro
 
 ## 🏗️ Architecture
 
-### Mimari Yaklaşımı
+Two feeds can describe content in different formats. The sync command normalizes JSON and XML into the same MySQL schema, then calculates scores so the web client can search both feeds with one request.
 
-Bu proje **Layered Architecture (Katmanlı Mimari)** ve **Clean Architecture** prensiplerini kullanır.
+```mermaid
+flowchart LR
+  JSON[JSON feed] --> Sync[Go sync command]
+  XML[XML feed] --> Sync
+  Sync --> DB[(MySQL)]
+  UI[React UI] --> API[Gin search API]
+  API --> DB
+  API --> Cache[Search result cache]
+```
 
-**Kullanılan Pattern'ler:**
-- **Layered Architecture**: Handler → Service → Repository → Database
-- **Repository Pattern**: Database işlemlerinin soyutlanması
-- **Dependency Injection**: Loose coupling ve test edilebilirlik
-- **Strategy Pattern**: Provider entegrasyonları (JSON/XML)
-- **Middleware Pattern**: HTTP request pipeline
+### Decisions and trade-offs
 
-**Teknoloji Stack:**
-- **Backend**: Go (Gin framework) with MySQL database
-- **Frontend**: React with Redux Toolkit, Vite, Tailwind CSS
-- **Database**: MySQL 8.0
-- **Cache**: Redis (optional, falls back to in-memory)
-- **Containerization**: Docker & Docker Compose
+- MySQL runs full-text title searches and falls back to a substring query for short input. This keeps ingestion and search in one database. Short substring queries can scan more rows.
+- The sync command calculates ranking from provider weight, freshness and engagement. Reads can sort by a stored score, but freshness reflects the last recalculation.
+- Search results have a TTL. Repeated queries can reuse results, but a cached result can lag behind the latest sync.
+
+### Reliability and limits
+
+The sync identifies content by provider and external ID. A later sequential sync can update an existing record. The current upsert reads before it writes, so schedule a single sync worker when using the same feeds. Content and tags are written separately. Inspect sync errors before treating a run as complete.
+
+The backend test suite covers parsing migration statements. It does not establish provider availability, search throughput or safe concurrent ingestion. The Compose environment is intended for local development.
 
 ## 📁 Project Structure
 
@@ -65,13 +71,13 @@ search-engine/
 
 1. **Clone the repository**
    ```bash
-   git clone <repository-url>
+   git clone https://github.com/rezanicgil/search-engine.git
    cd search-engine
    ```
 
 2. **Start all services with hot-reload**
    ```bash
-   docker-compose up -d
+   docker compose up -d
    ```
    
    **Hot Reload Features:**
@@ -83,9 +89,7 @@ search-engine/
 
 4. **Sync data from providers**
    ```bash
-   docker-compose exec backend air -c .air.toml &
-   # Or run sync command directly
-   docker-compose exec backend go run ./cmd/sync
+   docker compose exec backend go run ./cmd/sync
    ```
 
 5. **Access the application**
@@ -96,7 +100,7 @@ search-engine/
 
 6. **View logs (with hot-reload output)**
    ```bash
-   docker-compose logs -f backend frontend
+   docker compose logs -f backend frontend
    ```
 
 ### Local Development
@@ -221,18 +225,18 @@ make seed  # Adds 50 test items for pagination testing
 
 ## 📝 Development Workflow
 
-1. **Start services with hot-reload**: `docker-compose up -d`
+1. **Start services with hot-reload**: `docker compose up -d`
    - Backend automatically rebuilds on Go file changes
    - Frontend automatically refreshes on React/JS file changes
 
 2. **Sync providers** (in a new terminal):
    ```bash
-   docker-compose exec backend go run ./cmd/sync
+   docker compose exec backend go run ./cmd/sync
    ```
 
 3. **Add test data** (optional):
    ```bash
-   docker-compose exec backend go run ./cmd/seed
+   docker compose exec backend go run ./cmd/seed
    ```
 
 4. **Develop**: 
@@ -242,8 +246,8 @@ make seed  # Adds 50 test items for pagination testing
 
 5. **View logs**:
    ```bash
-   docker-compose logs -f backend  # Backend logs with Air output
-   docker-compose logs -f frontend # Frontend logs with Vite output
+   docker compose logs -f backend  # Backend logs with Air output
+   docker compose logs -f frontend # Frontend logs with Vite output
    ```
 
 6. **Test**: Use Swagger UI or frontend at http://localhost:3000
@@ -276,7 +280,7 @@ Apache 2.0
 ## 🐛 Troubleshooting
 
 ### Database connection issues
-- Ensure MySQL container is running: `docker-compose ps`
+- Ensure MySQL container is running: `docker compose ps`
 - Check environment variables in `.env`
 - Verify database credentials
 
